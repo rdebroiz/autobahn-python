@@ -349,28 +349,23 @@ def run(components, log_level='info'):
     #   import signal
     #   signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-    @asyncio.coroutine
-    def nicely_exit(signal):
+    async def nicely_exit(signal):
         log.info("Shutting down due to {signal}", signal=signal)
 
         tasks = asyncio.Task.all_tasks()
+        tasks.remove(asyncio.Task.current_task())
         for task in tasks:
-            # Do not cancel the current task.
-            if task is not asyncio.Task.current_task():
-                task.cancel()
+            task.cancel()
 
-        def cancel_all_callback(fut):
-            try:
-                fut.result()
-            except asyncio.CancelledError:
-                log.debug("All task cancelled")
-            except Exception as e:
-                log.error("Error while shutting down: {exception}", exception=e)
-            finally:
-                loop.stop()
-
-        fut = asyncio.gather(*tasks)
-        fut.add_done_callback(cancel_all_callback)
+        try:
+            await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            log.debug("All task cancelled")
+        except Exception:
+            log.error(txaio.failure_format_traceback(txaio.create_failure()))
+        finally:
+            await asyncio.sleep(0)
+        loop.stop()
 
     try:
         loop.add_signal_handler(signal.SIGINT, lambda: asyncio.ensure_future(nicely_exit("SIGINT")))
